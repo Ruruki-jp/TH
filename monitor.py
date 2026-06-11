@@ -1,49 +1,49 @@
 import os
-import hashlib
 import requests
 
-URL = "https://steamdb.info/app/3678970/history/"
+# Task Bar Hero の AppID
+APP_ID = "3678970"
+# Steam公式のプロダクト情報API（ブロックされません）
+URL = f"https://api.steampowered.com/ISteamApps/GetChangelogs/v1/?appid={APP_ID}"
+STEAMDB_PAGE = f"https://steamdb.info/app/{APP_ID}/history/"
 
 # 環境変数の取得
 WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 TOKEN = os.environ["GITHUB_TOKEN"]
 REPO = os.environ["GITHUB_REPOSITORY"]
 
-# SteamDB取得（Cloudflare等のボット対策を極力回避するためのヘッダー）
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5"
-}
-
-# SteamDBのHTMLを取得
+# Steam公式APIからデータを取得
 try:
-    res = requests.get(URL, headers=headers)
-    res.raise_for_status()  # 200以外（403エラー等）ならここで処理を止める
-    html = res.text
+    res = requests.get(URL)
+    res.raise_for_status()
+    data = res.json()
+    
+    # 最新のチェンジログ（更新履歴）を取得
+    changelogs = data.get("response", {}).get("changelogs", [])
+    if not changelogs:
+        print("更新履歴が見つかりませんでした。")
+        exit(0)
+        
+    # 最新の更新の「ChangeID」を状態保存のキーにする
+    new_change_id = str(changelogs[0].get("changeid", ""))
+    
 except Exception as e:
-    print(f"SteamDBの取得に失敗（スクレイピングブロックされた可能性あり）: {e}")
+    print(f"Steam APIの取得に失敗しました: {e}")
     exit(1)
 
-new_hash = hashlib.sha256(html.encode()).hexdigest()
-
 # GitHub APIの設定
-issue_title = "STEAMDB_HASH"
+issue_title = "STEAMDB_HASH"  # 管理用のIssueタイトル（名前はそのままでOK）
 api_headers = {
     "Authorization": f"Bearer {TOKEN}",
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28"
 }
 
-# 既存Issue検索（1ページ目の上限で見失わないよう、タイトル指定で検索）
+# 既存Issue検索
 search_url = f"https://api.github.com/search/issues?q=repo:{REPO}+type:issue+state:open+in:title+{issue_title}"
-try:
-    search_res = requests.get(search_url, headers=api_headers)
-    search_res.raise_for_status()
-    items = search_res.json().get("items", [])
-except Exception as e:
-    print(f"GitHub API（Issue検索）に失敗しました: {e}")
-    exit(1)
+search_res = requests.get(search_url, headers=api_headers)
+search_res.raise_for_status()
+items = search_res.json().get("items", [])
 
 issue = None
 for i in items:
@@ -51,28 +51,28 @@ for i in items:
         issue = i
         break
 
-old_hash = ""
+old_change_id = ""
 if issue:
-    old_hash = issue["body"].strip()
+    old_change_id = issue["body"].strip()
 
-# 比較と通知・更新
-if old_hash != new_hash:
-    # Discord通知
+# 前回とChangeIDが違う＝アップデートがあった場合
+if old_change_id != new_change_id:
+    # Discord通知（リンクは分かりやすいようにSteamDBのままにしています）
     requests.post(
         WEBHOOK,
         json={
-            "content": f"🔔 Task Bar Hero SteamDB 更新！\n{URL}"
+            "content": f"🔔 Task Bar Hero にアップデート（更新）が来ました！\n{STEAMDB_PAGE}"
         }
     )
 
     if issue:
-        # Issue更新
+        # Issueの更新
         requests.patch(
             issue["url"],
             headers=api_headers,
-            json={"body": new_hash}
+            json={"body": new_change_id}
         )
-        print("状態（Issue）を更新しました。")
+        print("現在の状態（ChangeID）を更新しました。")
     else:
         # 初回Issue作成
         requests.post(
@@ -80,9 +80,9 @@ if old_hash != new_hash:
             headers=api_headers,
             json={
                 "title": issue_title,
-                "body": new_hash
+                "body": new_change_id
             }
         )
         print("初回用の状態保存Issueを作成しました。")
 else:
-    print("更新はありませんでした。")
+    print("アップデートはありませんでした。")
