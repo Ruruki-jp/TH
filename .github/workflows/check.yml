@@ -5,7 +5,6 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
-# 必要最小限の権限に統一
 permissions:
   contents: read
   issues: write
@@ -24,7 +23,6 @@ jobs:
       - run: pip install requests
 
       - name: Run script
-        # ここでPythonにすべての環境変数を正しく引き渡します
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
