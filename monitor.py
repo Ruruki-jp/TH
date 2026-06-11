@@ -1,42 +1,31 @@
 import os
-import requests
+import hashlib
+import cloudscraper
 
-# Task Bar Hero の AppID
-APP_ID = "3678970"
-# 誰でもアクセスできるSteam公式のアプリ更新情報API（100%ブロックされません）
-URL = f"https://api.steampowered.com/ISteamApps/UpToDateCheck/v1/?appid={APP_ID}&version=0"
-STEAMDB_PAGE = f"https://steamdb.info/app/{APP_ID}/history/"
+URL = "https://steamdb.info/app/3678970/history/"
 
 # 環境変数の取得
 WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 TOKEN = os.environ["GITHUB_TOKEN"]
 REPO = os.environ["GITHUB_REPOSITORY"]
 
-# Steam公式APIからデータを取得
+# cloudscraperの起動（Cloudflare対策）
+scraper = cloudscraper.create_scraper()
+
 try:
-    res = requests.get(URL)
+    # 通常のrequestsではなくscraperを使うことで403エラーを回避します
+    res = scraper.get(URL)
     res.raise_for_status()
-    data = res.json()
-    
-    # APIのレスポンスから「現在の最新ChangeID（型番のようなもの）」を抽出
-    # ※このAPIは、現在の最新ChangeIDをレスポンスの「required_version」という項目に返してくれます
-    success = data.get("response", {}).get("success", False)
-    if not success:
-        print("Steam APIからのデータ取得に失敗しました（success=false）")
-        exit(1)
-        
-    new_change_id = str(data.get("response", {}).get("required_version", ""))
-    
-    if not new_change_id:
-        print("ChangeIDの取得に失敗しました。")
-        exit(1)
-        
+    html = res.text
 except Exception as e:
-    print(f"Steam APIの取得に失敗しました: {e}")
+    print(f"SteamDBの取得に失敗しました: {e}")
     exit(1)
 
+# HTMLからハッシュ値を生成
+new_hash = hashlib.sha256(html.encode()).hexdigest()
+
 # GitHub APIの設定
-issue_title = "STEAMDB_HASH"  # 管理用のIssueタイトル（名前はそのままでOK）
+issue_title = "STEAMDB_HASH"
 api_headers = {
     "Authorization": f"Bearer {TOKEN}",
     "Accept": "application/vnd.github+json",
@@ -45,7 +34,7 @@ api_headers = {
 
 # 既存Issue検索
 search_url = f"https://api.github.com/search/issues?q=repo:{REPO}+type:issue+state:open+in:title+{issue_title}"
-search_res = requests.get(search_url, headers=api_headers)
+search_res = scraper.get(search_url, headers=api_headers)
 search_res.raise_for_status()
 items = search_res.json().get("items", [])
 
@@ -55,38 +44,38 @@ for i in items:
         issue = i
         break
 
-old_change_id = ""
+old_hash = ""
 if issue:
-    old_change_id = issue["body"].strip()
+    old_hash = issue["body"].strip()
 
-# 前回とChangeIDが違う＝アップデートがあった場合
-if old_change_id != new_change_id:
+# 比較と通知・更新
+if old_hash != new_hash:
     # Discord通知
-    requests.post(
+    scraper.post(
         WEBHOOK,
         json={
-            "content": f"🔔 Task Bar Hero にアップデート（更新）が来ました！\n{STEAMDB_PAGE}"
+            "content": f"🔔 Task Bar Hero SteamDB 更新！\n{URL}"
         }
     )
 
     if issue:
-        # Issueの更新
-        requests.patch(
+        # Issue更新
+        scraper.patch(
             issue["url"],
             headers=api_headers,
-            json={"body": new_change_id}
+            json={"body": new_hash}
         )
-        print(f"現在の状態（ChangeID: {new_change_id}）を更新しました。")
+        print("Issueのハッシュ値を更新しました。")
     else:
         # 初回Issue作成
-        requests.post(
+        scraper.post(
             f"https://api.github.com/repos/{REPO}/issues",
             headers=api_headers,
             json={
                 "title": issue_title,
-                "body": new_change_id
+                "body": new_hash
             }
         )
-        print(f"初回用の状態保存Issueを作成しました。（ChangeID: {new_change_id}）")
+        print("初回用のIssueを作成しました。")
 else:
-    print(f"現在のChangeID ({new_change_id}) からアップデートはありませんでした。")
+    print("変更はありませんでした。")
