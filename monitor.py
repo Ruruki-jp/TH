@@ -3,8 +3,8 @@ import requests
 
 # Task Bar Hero の AppID
 APP_ID = "3678970"
-# Steam公式のプロダクト情報API（ブロックされません）
-URL = f"https://api.steampowered.com/ISteamApps/GetChangelogs/v1/?appid={APP_ID}"
+# 誰でもアクセスできるSteam公式のアプリ更新情報API（100%ブロックされません）
+URL = f"https://api.steampowered.com/ISteamApps/UpToDateCheck/v1/?appid={APP_ID}&version=0"
 STEAMDB_PAGE = f"https://steamdb.info/app/{APP_ID}/history/"
 
 # 環境変数の取得
@@ -18,15 +18,19 @@ try:
     res.raise_for_status()
     data = res.json()
     
-    # 最新のチェンジログ（更新履歴）を取得
-    changelogs = data.get("response", {}).get("changelogs", [])
-    if not changelogs:
-        print("更新履歴が見つかりませんでした。")
-        exit(0)
+    # APIのレスポンスから「現在の最新ChangeID（型番のようなもの）」を抽出
+    # ※このAPIは、現在の最新ChangeIDをレスポンスの「required_version」という項目に返してくれます
+    success = data.get("response", {}).get("success", False)
+    if not success:
+        print("Steam APIからのデータ取得に失敗しました（success=false）")
+        exit(1)
         
-    # 最新の更新の「ChangeID」を状態保存のキーにする
-    new_change_id = str(changelogs[0].get("changeid", ""))
+    new_change_id = str(data.get("response", {}).get("required_version", ""))
     
+    if not new_change_id:
+        print("ChangeIDの取得に失敗しました。")
+        exit(1)
+        
 except Exception as e:
     print(f"Steam APIの取得に失敗しました: {e}")
     exit(1)
@@ -57,7 +61,7 @@ if issue:
 
 # 前回とChangeIDが違う＝アップデートがあった場合
 if old_change_id != new_change_id:
-    # Discord通知（リンクは分かりやすいようにSteamDBのままにしています）
+    # Discord通知
     requests.post(
         WEBHOOK,
         json={
@@ -72,7 +76,7 @@ if old_change_id != new_change_id:
             headers=api_headers,
             json={"body": new_change_id}
         )
-        print("現在の状態（ChangeID）を更新しました。")
+        print(f"現在の状態（ChangeID: {new_change_id}）を更新しました。")
     else:
         # 初回Issue作成
         requests.post(
@@ -83,6 +87,6 @@ if old_change_id != new_change_id:
                 "body": new_change_id
             }
         )
-        print("初回用の状態保存Issueを作成しました。")
+        print(f"初回用の状態保存Issueを作成しました。（ChangeID: {new_change_id}）")
 else:
-    print("アップデートはありませんでした。")
+    print(f"現在のChangeID ({new_change_id}) からアップデートはありませんでした。")
