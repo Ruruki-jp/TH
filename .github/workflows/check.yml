@@ -20,7 +20,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install requests
+      # cloudscraper をインストールするように追加します
+      - run: pip install requests cloudscraper
 
       - name: Run script
         env:
